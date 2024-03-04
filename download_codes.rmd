@@ -1,0 +1,64 @@
+```{r, include=FALSE,echo=FALSE}
+
+rm(list = ls())
+
+PAQUETES <- c("dplyr","tidyverse","R.utils","httr","readR")
+
+for (el in PAQUETES){
+  if (!require(el, character.only = TRUE)) {
+    install.packages(el)
+    require(el, character.only = TRUE)
+  }
+}
+
+
+rm(PAQUETES, el)
+```
+
+```{r}
+inventory <- read_tsv("./inventory.txt")
+```
+```{r}
+dictionary<-tibble()
+for (ii in (1:nrow(inventory))) {
+  print(paste0("row ", ii, " of ", nrow(inventory)))
+  variable_code<- inventory$Code[ii]
+  variable_name<- inventory$Label[ii]
+  url <- inventory$`Latest tsv download url`[ii]
+  # Perform the GET request
+  response <- GET(url)
+    # Verify successful response
+  if (status_code(response) == 200) {
+    # Utilize a temporary file to hold the content
+    temp <- tempfile()
+    writeBin(content(response, "raw"), temp)
+    
+    # Directly read from the gzipped file
+    data <- read_tsv(gzfile(temp), col_types = cols()) %>% 
+          select(CODE,`Label - English`) %>% 
+      rename("code"=CODE,"name"=`Label - English`)
+    
+    # Cleanup: remove the temporary file
+    unlink(temp)
+    
+    # Convert the list to a dataframe with nested dataframes
+    new_row <- tibble(variable_code,
+                          variable_name,
+                          data) %>%
+    group_by(variable_code,variable_name) %>% 
+    nest()
+
+    dictionary<-rbind(dictionary,new_row)
+    
+    print("Data successfully loaded into 'dictionary'.")
+  } else {
+    print(paste("Failed to fetch data. Status code:", status_code(response)))
+  }
+}
+
+
+
+
+
+```
+

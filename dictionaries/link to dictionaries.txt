@@ -1,0 +1,1 @@
+https://ec.europa.eu/eurostat/databrowser/bulk?lang=en&selectedTab=codeList
