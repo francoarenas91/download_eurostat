@@ -11,50 +11,66 @@ for (el in PAQUETES){
 }
 ```
 
-load country names, sheets, dictionary and create function to load and store data
+load country names, dictionary 
 ```{r}
-# Path to the dictionary file
-file_path <- paste0("./dictionaries/","decoding_dict",".xlsx")
+  #load EU country names
+  EU_countries<-read_excel("./dictionaries/EU_countries.xlsx") %>% 
+    rename(country_code=code,country_name=name)
+  EU_Countries_names_dict<- setNames(EU_countries$country_name, EU_countries$country_code)
+  
+  # load to the dictionary file
+dictionary <- read_rds("./dictionaries/variable_dictionary.RDS")
 
-# Get a list of all sheet names
-sheet_names <- excel_sheets(file_path)
 
-# Load each dictionary sheet
-dictionary_df <- lapply(sheet_names, function(sheet) {
-  read_excel(file_path, sheet = sheet, col_types = c("code" = "text", "name" = "text"))
-}) %>% bind_rows()
-dictionary <- setNames(dictionary_df$name, dictionary_df$code)
+```
 
-#load EU country names
-EU_countries<-read_excel("./dictionaries/EU_countries.xlsx") %>% 
-  rename(country_code=code,country_name=name)
-EU_Countries_names_dict<- setNames(EU_countries$country_name, EU_countries$country_code)
+
+
+create function to load and store data
+```{r}
 
 # Function to load and save country data
-load_data_country <- function(series, alias, dictionary, sheet_names) {
+load_data_country <- function(series, alias, dictionary) {
+  print(paste0("loading ", series, " ", alias))
+
+
+
   # Try to load data using get_eurostat
   data <- try(
     get_eurostat(series, filters = list(geo = pull(EU_countries, country_code))) %>%
       filter(!is.na(values)), # Filter out NAs
     silent = TRUE
   )
-
+    
   # Check if an error occurred during get_eurostat call
-  if (class(data) == "try-error") {
+  if ("try-error" %in% class(data)){
     message("Error in series code: ", series)
     return(NULL) # Exit the function on error
   }
-
   # Recode columns
-  for (sheet in sheet_names) {
-    if (sheet %in% colnames(data)) {
-      data <- data %>%
-        mutate(!!sym(sheet) := recode(!!sym(sheet), !!!dictionary))
-      # !!! splits a vector into individual arguments for a function
-      # !!sym() is a way to convert the string sheet into a symbol that dplyr can understand as a column name.
-    }
-  }
 
+  for (variable in colnames(data)) {
+      if (variable %in% c("geo","time","TIME_PERIOD","c_birth")) {
+        #skip
+      }
+      else if (variable %in% tolower(unique(dictionary$variable_code))) {
+        #filter and unnest dictionary
+        dictionary %>% 
+          filter(variable_code==toupper(variable)) %>% 
+          unnest(cols=data) -> variable_dictionary
+        #get variable name
+        dictionary %>% 
+          filter(variable_code==toupper(variable)) %>% 
+          pull(variable_name) -> variable_name
+        #create replacing dictionary
+        replacement_dictionary <- setNames(variable_dictionary$name, variable_dictionary$code)
+        data <- data %>%
+          mutate(!!sym(variable_name) := recode(!!sym(variable), !!!replacement_dictionary)) %>% 
+          select(-!!sym(variable))
+        # !!! splits a vector into individual arguments for a function
+        # !!sym() is a way to convert the string sheet into a symbol that dplyr can understand as a column name.
+      }
+  }
   # Save the data
   save(data, file = paste0("./data/country/", alias, ".RData"))
   print(paste0("series ", series, " ", alias, " loaded"))
@@ -71,9 +87,9 @@ loading country data
 statistics<-read_excel("./loading_statistics.xlsx",sheet="country" )
 
 for (ii in 1:nrow(statistics)) {
-  load_data_country(statistics$code[ii],statistics$alias[ii],dictionary,sheet_names)
+  load_data_country(statistics$code[ii],statistics$alias[ii],dictionary)
 }
-statistics$code[ii]
+
 
 ```
 create geo and time table for the star schema in countries
@@ -98,9 +114,10 @@ for (file in data_files) {
 save(geo_dates, file = paste0("./data/country/","geo_dates", ".RData"))
 
 ```
-funtion to load regional data
+
+function to load regional data
 ```{r}
-load_data_region <- function(series,alias,dictionary,sheet_names){
+load_data_region <- function(series,alias,dictionary){
   EU_countries<-read_excel("./dictionaries/EU_countries.xlsx") %>% 
   rename(country_code=code,country_name=name)
   #load data
@@ -111,13 +128,26 @@ load_data_region <- function(series,alias,dictionary,sheet_names){
     filter(nchar(geo)==4) %>% 
     select(-country_code) # in is in the date-country data
   #recode columns
-  for (sheet in sheet_names){
-
-    if (sheet %in% colnames(data)){
-        data <- data %>% 
-        mutate(!!sym(sheet) := recode(!!sym(sheet), !!!dictionary))
-        ##!!! splits a vector into individual arguments for a function
-        ## !!sym() is a way to convert the string sheet into a symbol that dplyr can understand as a column name.
+  for (variable in colnames(data)) {
+      if (variable %in% c("geo","time","TIME_PERIOD")) {
+        #skip
+      }
+      else if (variable %in% tolower(unique(dictionary$variable_code))) {
+        #filter and unnest dictionary
+        dictionary %>% 
+          filter(variable_code==toupper(variable)) %>% 
+          unnest(cols=data) -> variable_dictionary
+        #get variable name
+        dictionary %>% 
+          filter(variable_code==toupper(variable)) %>% 
+          pull(variable_name) -> variable_name
+        #create replacing dictionary
+        replacement_dictionary <- setNames(variable_dictionary$name, variable_dictionary$code)
+        data <- data %>%
+          mutate(!!sym(variable_name) := recode(!!sym(variable), !!!replacement_dictionary)) %>% 
+          select(-!!sym(variable))
+        # !!! splits a vector into individual arguments for a function
+        # !!sym() is a way to convert the string sheet into a symbol that dplyr can understand as a column name.
     }
   }
   
@@ -133,7 +163,7 @@ loading region data
 statistics<-read_excel("./loading_statistics.xlsx",sheet="region" )
 
 for (ii in 1:nrow(statistics)) {
-  load_data_region(statistics$code[ii],statistics$alias[ii],dictionary,sheet_names)
+  load_data_region(statistics$code[ii],statistics$alias[ii],dictionary)
 }
 
 ```
@@ -180,13 +210,26 @@ load_data_city <- function(series,alias,dictionary,sheet_names){
     select(-country_code) %>% 
     rename(city_code=cities)
   #recode columns
-  for (sheet in sheet_names){
-
-    if (sheet %in% colnames(data)){
-        data <- data %>% 
-        mutate(!!sym(sheet) := recode(!!sym(sheet), !!!dictionary))
-        ##!!! splits a vector into individual arguments for a function
-        ## !!sym() is a way to convert the string sheet into a symbol that dplyr can understand as a column name.
+  for (variable in colnames(data)) {
+      if (variable %in% c("geo","time","TIME_PERIOD")) {
+        #skip
+      }
+      else if (variable %in% tolower(unique(dictionary$variable_code))) {
+        #filter and unnest dictionary
+        dictionary %>% 
+          filter(variable_code==toupper(variable)) %>% 
+          unnest(cols=data) -> variable_dictionary
+        #get variable name
+        dictionary %>% 
+          filter(variable_code==toupper(variable)) %>% 
+          pull(variable_name) -> variable_name
+        #create replacing dictionary
+        replacement_dictionary <- setNames(variable_dictionary$name, variable_dictionary$code)
+        data <- data %>%
+          mutate(!!sym(variable_name) := recode(!!sym(variable), !!!replacement_dictionary)) %>% 
+          select(-!!sym(variable))
+        # !!! splits a vector into individual arguments for a function
+        # !!sym() is a way to convert the string sheet into a symbol that dplyr can understand as a column name.
     }
   }
   
@@ -236,75 +279,3 @@ geo_dates %>%
 save(geo_dates, file = paste0("./data/city/","geo_dates", ".RData"))
 
 ```
-
-
-NOTE: THESE BELOW ARE OLD LOADS
-
-
-##1. Material living conditions
-Average rating of satisfaction by domain, sex, age and educational attainment level
-```{r}
-datasets=c("ilc_pw01","ilc_pw05")
-EU_countries<-read_excel("./dictionaries/EU_countries.xlsx" ) %>% 
-  rename(country_code=code,country_name=name)
-EU_Countries_names_dict<- setNames(EU_countries$country_name, EU_countries$country_code)
-
-data_01 <-get_eurostat(datasets[1],
-                    filters=list(geo=pull(EU_countries,country_code))) #read data for the 27 only
-data_02 <-get_eurostat(datasets[2],
-                    filters=list(geo=pull(EU_countries,country_code))) #read data for the 27 only
-
-# merge both datasets
-data_01 %>% 
-  # mutate(lev_satis=NA ) %>% 
-  bind_rows(data_02) -> satisfaction
-
-sheets=c("age","isced11","indic_wb")
-for (sheet in sheets) {
-  dict <-read_excel(paste0("./dictionaries/","ilc_pw05",".xlsx"),sheet=sheet)
-  replacement_dict <- setNames(dict$name, dict$code)
-  satisfaction <- satisfaction %>% 
-  mutate(!!sym(sheet) := recode(!!sym(sheet), !!!replacement_dict))
-  ##!!! splits a vector into individual arguments for a function
-  ## !!sym() is a way to convert the string sheet into a symbol that dplyr can understand as a column name.
-}
-
-satisfaction %>% 
-  mutate(
-    sex = recode(sex,"F"="Female","M"="Male","T"="Total"),
-    country_name =recode(geo,!!!EU_Countries_names_dict),
-    unit = recode(unit,"RTG"="Rating","PC"="Percentage")
-    ) %>% 
-  rename(indicator=indic_wb,
-         education=isced11) -> satisfaction_export
-
-save(exporting_data, file = paste0("./data/","satisfaction", ".RData"))
-
-
-```
-
-income of households, regional  
-```{r}
-dataset="nama_10r_2hhinc"
-NUTS2<-read_excel("./dictionaries/NUTS2.xlsx" ) %>% 
-  rename(geo=NUTS2)
-
-income <-get_eurostat(dataset)
-income %>% 
-  mutate(country_code=substr(geo,1,2)) %>% 
-  filter(country_code %in% EU_countries$country_code) %>% 
-  filter(nchar(geo)==4) %>%   #only nuts 2 regions
-  filter(direct=="BAL") %>%  #balance
-  filter(unit=="EUR_HAB") %>% #eur per habitant
-  filter(na_item=="B5N") %>% #income 
-  left_join(NUTS2,by="geo") %>% 
-  left_join(EU_countries,by=c("country_code")) %>% 
-  # mutate(date = TIME_PERIOD) %>% 
-  select(-c(direct,na_item)) ->income_export
-
-save(income_export, file = paste0("./data/",dataset, ".RData"))
-
-
-```
-
-

@@ -57,8 +57,9 @@ for (ii in (1:nrow(inventory))) {
 }
 
 
+saveRDS(dictionary,file="./dictionaries/variable_dictionary.RDS")
 
-
+test<-read_rds("./dictionaries/variable_dictionary.RDS")
 
 ```
 
